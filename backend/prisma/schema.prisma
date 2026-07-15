@@ -1,0 +1,569 @@
+// ============================================================
+// Student Registration & Academic Management Portal
+// Prisma Schema (PostgreSQL)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  ADMIN
+  SUPER_ADMIN
+  VERIFIER
+  EXAM_CONTROLLER
+  ACCOUNTS
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum Category {
+  GENERAL
+  OBC
+  SC
+  ST
+  EWS
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_VERIFICATION
+  DOCUMENTS_REJECTED
+  ON_HOLD
+  APPROVED
+  REJECTED
+  LOCKED
+}
+
+enum DocumentType {
+  AADHAAR
+  PAN
+  PASSPORT
+  DRIVING_LICENCE
+  VOTER_ID
+  GOVERNMENT_ID
+  BIRTH_CERTIFICATE
+  INCOME_CERTIFICATE
+  MIGRATION_CERTIFICATE
+  TRANSFER_CERTIFICATE
+  CHARACTER_CERTIFICATE
+  GAP_CERTIFICATE
+  EXPERIENCE_CERTIFICATE
+  SPORTS_CERTIFICATE
+  NCC
+  NSS
+  CATEGORY_CERTIFICATE
+  DOMICILE_CERTIFICATE
+  MARKSHEET_10
+  MARKSHEET_12
+  MARKSHEET_GRADUATION
+  MARKSHEET_POST_GRADUATION
+  DIPLOMA
+  ITI
+  PHOTO
+  SIGNATURE
+  OTHER
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  RESUBMISSION_REQUIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  UPI
+  CREDIT_CARD
+  DEBIT_CARD
+  NET_BANKING
+  WALLET
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+// ------------------------------------------------------------
+// CORE USER / AUTH
+// ------------------------------------------------------------
+
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  mobile             String    @unique
+  passwordHash       String
+  role               UserRole  @default(STUDENT)
+  isEmailVerified    Boolean   @default(false)
+  isMobileVerified   Boolean   @default(false)
+  isActive           Boolean   @default(true)
+  isLocked           Boolean   @default(false)
+  failedLoginCount   Int       @default(0)
+  lastLoginAt        DateTime?
+  mfaEnabled         Boolean   @default(false)
+
+  student            Student?
+  adminProfile       AdminProfile?
+  sessions           Session[]
+  refreshTokens      RefreshToken[]
+  otpCodes           OtpCode[]
+  auditLogs          AuditLog[] @relation("AuditActor")
+  notifications      Notification[]
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime? // soft delete
+
+  @@index([email])
+  @@index([mobile])
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  deviceInfo   String?
+  ipAddress    String?
+  userAgent    String?
+  isActive     Boolean  @default(true)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  tokenHash   String   @unique
+  revoked     Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model OtpCode {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  codeHash   String
+  purpose    String   // LOGIN, REGISTER, RESET_PASSWORD, VERIFY_MOBILE, VERIFY_EMAIL
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, purpose])
+  @@map("otp_codes")
+}
+
+model AdminProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id])
+  fullName   String
+  designation String?
+  department String?
+  permissions Permission[] @relation("AdminPermissions")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("admin_profiles")
+}
+
+model Permission {
+  id       String @id @default(uuid())
+  code     String @unique // e.g. "STUDENT_VERIFY", "RESULT_PUBLISH"
+  label    String
+  admins   AdminProfile[] @relation("AdminPermissions")
+
+  @@map("permissions")
+}
+
+// ------------------------------------------------------------
+// STUDENT PROFILE
+// ------------------------------------------------------------
+
+model Student {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id])
+
+  applicationNumber     String?  @unique
+  registrationNumber    String?  @unique
+  rollNumber            String?  @unique
+
+  fullName              String
+  fathersName            String
+  mothersName            String
+  dob                   DateTime
+  gender                Gender
+  category              Category @default(GENERAL)
+  subCategory            String?
+  nationality            String   @default("Indian")
+  religion               String?
+  maritalStatus          String?
+  bloodGroup             String?
+  identificationMark      String?
+
+  aadhaarNumber          String?  // encrypted at rest, masked on read
+  panNumber               String?
+  passportNumber          String?
+
+  alternateMobile         String?
+
+  permanentAddressLine1  String?
+  permanentAddressLine2  String?
+  permanentPincode       String?
+  permanentDistrict      String?
+  permanentState         String?
+  permanentCountry       String?  @default("India")
+
+  correspondenceSameAsPermanent Boolean @default(true)
+  correspondenceAddressLine1    String?
+  correspondenceAddressLine2    String?
+  correspondencePincode         String?
+  correspondenceDistrict        String?
+  correspondenceState           String?
+  correspondenceCountry         String? @default("India")
+
+  preferredLanguage      String   @default("en") // i18n locale
+
+  academicRecords        AcademicRecord[]
+  documents               Document[]
+  application              Application?
+  payments                 Payment[]
+  admitCards                AdmitCard[]
+  results                   Result[]
+  examCenterAllotment       ExamCenterAllotment?
+  auditLogs                 AuditLog[] @relation("AuditSubjectStudent")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // soft delete
+
+  @@index([applicationNumber])
+  @@index([registrationNumber])
+  @@index([rollNumber])
+  @@index([category])
+  @@map("students")
+}
+
+model AcademicRecord {
+  id              String   @id @default(uuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id])
+  level           String   // TENTH, TWELFTH, GRADUATION, POST_GRADUATION, DIPLOMA, ITI
+  boardOrUniversity String
+  rollNumber        String?
+  registrationNumber String?
+  passingYear       Int
+  marksObtained      Float?
+  maxMarks            Float?
+  percentage          Float?
+  cgpa                Float?
+  subjects            String? // JSON encoded list
+  medium               String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId, level])
+  @@map("academic_records")
+}
+
+// ------------------------------------------------------------
+// DOCUMENTS (photo, signature, certificates, IDs)
+// ------------------------------------------------------------
+
+model Document {
+  id                 String   @id @default(uuid())
+  studentId          String
+  student            Student  @relation(fields: [studentId], references: [id])
+  type               DocumentType
+  documentNumber     String?
+  issueDate          DateTime?
+  expiryDate         DateTime?
+  issuingAuthority   String?
+  issuingState        String?
+  issuingDistrict     String?
+  nameOnDocument      String?
+
+  fileKey             String   // S3 object key
+  fileUrl             String?  // signed/served URL (generated on demand)
+  mimeType            String
+  fileSizeBytes       Int
+  widthPx             Int?
+  heightPx            Int?
+  checksumSha256      String
+
+  // AI-assisted quality checks (advisory only — see verification below)
+  aiQualityScore      Float?
+  aiQualityFlags       String? // JSON: {blur, brightness, faceDetected, singleFace, headPosition, background}
+  aiCheckedAt          DateTime?
+
+  verificationStatus   DocumentVerificationStatus @default(PENDING)
+  verifiedById         String?
+  verifiedAt            DateTime?
+  rejectionReason        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@index([studentId, type])
+  @@index([verificationStatus])
+  @@map("documents")
+}
+
+// ------------------------------------------------------------
+// APPLICATION (multi-step submission wrapper)
+// ------------------------------------------------------------
+
+model Application {
+  id               String            @id @default(uuid())
+  studentId        String            @unique
+  student          Student           @relation(fields: [studentId], references: [id])
+  courseId         String?
+  course           Course?           @relation(fields: [courseId], references: [id])
+
+  status           ApplicationStatus @default(DRAFT)
+  currentStep      Int               @default(1)
+  totalSteps       Int               @default(6)
+  stepData         Json?             // partial form state for resume-later
+  declarationAccepted Boolean         @default(false)
+  declarationSignedAt DateTime?
+
+  submittedAt      DateTime?
+  lockedAt         DateTime?
+  qrCodePayload    String?
+  pdfFileKey       String?
+
+  reviewedById     String?
+  reviewedAt       DateTime?
+  rejectionReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@map("applications")
+}
+
+model Course {
+  id           String   @id @default(uuid())
+  code         String   @unique
+  name         String
+  description  String?
+  isActive     Boolean  @default(true)
+  applications Application[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("courses")
+}
+
+// ------------------------------------------------------------
+// PAYMENTS (fees)
+// ------------------------------------------------------------
+
+model Payment {
+  id              String        @id @default(uuid())
+  studentId       String
+  student         Student       @relation(fields: [studentId], references: [id])
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("INR")
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+  gateway         String        // e.g. RAZORPAY, PAYU, CASHFREE
+  gatewayOrderId  String?       @unique
+  gatewayPaymentId String?      @unique
+  gatewaySignature String?
+  receiptNumber    String?      @unique
+  failureReason    String?
+  refundAmount      Decimal?    @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([status])
+  @@map("payments")
+}
+
+// ------------------------------------------------------------
+// EXAM CENTER / ADMIT CARD / RESULTS
+// ------------------------------------------------------------
+
+model ExamCenter {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  name          String
+  address       String
+  city          String
+  state         String
+  capacity      Int
+  isActive      Boolean  @default(true)
+  allotments    ExamCenterAllotment[]
+
+  @@map("exam_centers")
+}
+
+model ExamCenterAllotment {
+  id            String     @id @default(uuid())
+  studentId     String     @unique
+  student       Student    @relation(fields: [studentId], references: [id])
+  examCenterId  String
+  examCenter    ExamCenter @relation(fields: [examCenterId], references: [id])
+  seatNumber    String?
+  examDate      DateTime
+  reportingTime String?
+  createdAt DateTime @default(now())
+
+  @@index([examCenterId])
+  @@map("exam_center_allotments")
+}
+
+model AdmitCard {
+  id             String   @id @default(uuid())
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id])
+  admitCardNumber String  @unique
+  qrCodePayload   String
+  barcodePayload  String
+  pdfFileKey       String?
+  issuedAt         DateTime @default(now())
+  isRevoked         Boolean  @default(false)
+
+  @@index([studentId])
+  @@map("admit_cards")
+}
+
+model Result {
+  id             String   @id @default(uuid())
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id])
+  examName       String
+  totalMarks     Float
+  obtainedMarks  Float
+  percentage     Float
+  grade          String?
+  rank           Int?
+  status         String   // PASS, FAIL, WITHHELD
+  isPublished    Boolean  @default(false)
+  publishedAt    DateTime?
+  pdfFileKey     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([isPublished])
+  @@map("results")
+}
+
+// ------------------------------------------------------------
+// NOTIFICATIONS
+// ------------------------------------------------------------
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id])
+  channel   NotificationChannel
+  title     String
+  body      String
+  isRead    Boolean             @default(false)
+  sentAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ------------------------------------------------------------
+// AUDIT / HISTORY (comprehensive audit trail for every change)
+// ------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorId      String?
+  actor        User?    @relation("AuditActor", fields: [actorId], references: [id])
+  studentId    String?
+  student      Student? @relation("AuditSubjectStudent", fields: [studentId], references: [id])
+
+  entityType   String   // e.g. "Student", "Document", "Application"
+  entityId     String
+  action       String   // CREATE, UPDATE, DELETE, APPROVE, REJECT, LOGIN, etc.
+  beforeState  Json?
+  afterState   Json?
+  ipAddress    String?
+  userAgent    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ------------------------------------------------------------
+// DATA RETENTION / ARCHIVAL
+// ------------------------------------------------------------
+
+model RetentionPolicy {
+  id              String   @id @default(uuid())
+  entityType      String   @unique // "Application", "Document", "Payment", "AuditLog"
+  retentionMonths Int
+  archiveAfterMonths Int?
+  deleteAfterMonths  Int?
+  lastRunAt          DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("retention_policies")
+}
+
+model ArchiveRecord {
+  id           String   @id @default(uuid())
+  entityType   String
+  entityId     String
+  archivedData Json
+  archivedAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@map("archive_records")
+}
